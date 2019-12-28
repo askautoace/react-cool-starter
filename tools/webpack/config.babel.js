@@ -6,6 +6,7 @@ import OptimizeCSSAssetsPlugin from 'optimize-css-assets-webpack-plugin';
 import MiniCssExtractPlugin from 'mini-css-extract-plugin';
 import CompressionPlugin from 'compression-webpack-plugin';
 import ImageminPlugin from 'imagemin-webpack-plugin';
+import ForkTsCheckerWebpackPlugin from 'fork-ts-checker-webpack-plugin';
 import FriendlyErrorsWebpackPlugin from 'friendly-errors-webpack-plugin';
 import { BundleAnalyzerPlugin } from 'webpack-bundle-analyzer';
 import LoadablePlugin from '@loadable/webpack-plugin';
@@ -47,6 +48,8 @@ const getPlugins = () => {
     // Development
     plugins.push(
       new webpack.HotModuleReplacementPlugin(),
+      // Runs typescript type checker on a separate process
+      new ForkTsCheckerWebpackPlugin(),
       new FriendlyErrorsWebpackPlugin()
     );
   } else {
@@ -54,7 +57,7 @@ const getPlugins = () => {
       // Production
       new webpack.HashedModuleIdsPlugin(),
       new CompressionPlugin({
-        test: /\.jsx?$|\.css$|\.(scss|sass)$|\.html$/,
+        test: /\.(js|css|html)$/,
         threshold: 10240
       }),
       // Plugin to compress images with imagemin
@@ -77,10 +80,10 @@ const getPlugins = () => {
 // Setup the entry for development/production
 const getEntry = () => {
   // Development
-  let entry = ['webpack-hot-middleware/client?reload=true', './src/client.js'];
+  let entry = ['webpack-hot-middleware/client?reload=true', './src/client.tsx'];
 
   // production
-  if (!isDev) entry = ['./src/client.js'];
+  if (!isDev) entry = ['./src/client.tsx'];
 
   return entry;
 };
@@ -88,11 +91,18 @@ const getEntry = () => {
 // Webpack configuration
 module.exports = {
   mode: isDev ? 'development' : 'production',
-  devtool: isDev ? 'eval-source-map' : 'hidden-source-map',
+  devtool: isDev ? 'eval-source-map' : false,
   context: path.resolve(process.cwd()),
   entry: getEntry(),
   optimization: {
-    minimizer: [new TerserJSPlugin({}), new OptimizeCSSAssetsPlugin({})],
+    minimizer: [
+      new TerserJSPlugin({}),
+      new OptimizeCSSAssetsPlugin({
+        cssProcessorPluginOptions: {
+          preset: ['default', { discardComments: { removeAll: !isDev } }]
+        }
+      })
+    ],
     splitChunks: {
       // Auto split vendor modules in production only
       chunks: isDev ? 'async' : 'all'
@@ -109,10 +119,17 @@ module.exports = {
   module: {
     rules: [
       {
-        test: /\.jsx?$/,
+        test: /\.(t|j)sx?$/,
         exclude: /node_modules/,
         loader: 'babel',
         options: { cacheDirectory: isDev }
+      },
+      // All output '.js' files will have any sourcemaps re-processed by source-map-loader.
+      // So you can debug your output code as if it was Typescript.
+      {
+        enforce: 'pre',
+        test: /\.js$/,
+        loader: 'source-map'
       },
       {
         test: /\.css$/,
@@ -130,7 +147,7 @@ module.exports = {
             options: {
               importLoaders: 1,
               modules: USE_CSS_MODULES && {
-                localIdentName: '[name]__[local]--[hash:base64:5]',
+                localIdentName: isDev ? '[name]__[local]' : '[hash:base64:5]',
                 context: path.resolve(process.cwd(), 'src')
               },
               sourceMap: true
@@ -154,21 +171,14 @@ module.exports = {
             options: {
               importLoaders: 2,
               modules: USE_CSS_MODULES && {
-                localIdentName: '[name]__[local]--[hash:base64:5]',
+                localIdentName: isDev ? '[name]__[local]' : '[hash:base64:5]',
                 context: path.resolve(process.cwd(), 'src')
               },
               sourceMap: true
             }
           },
           { loader: 'postcss', options: { sourceMap: true } },
-          {
-            loader: 'sass',
-            options: {
-              outputStyle: 'expanded',
-              sourceMap: true,
-              sourceMapContents: !isDev
-            }
-          }
+          { loader: 'sass', options: { sourceMap: true } }
         ]
       },
       {
@@ -193,7 +203,8 @@ module.exports = {
   resolve: {
     modules: ['src', 'node_modules'],
     descriptionFiles: ['package.json'],
-    extensions: ['.js', '.jsx', '.json']
+    extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
+    alias: { 'react-dom': '@hot-loader/react-dom' }
   },
   cache: isDev,
   // Some libraries import Node modules but don't use them in the browser.
